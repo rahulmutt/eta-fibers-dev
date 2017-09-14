@@ -1,0 +1,25 @@
+name:                eta-fibers-dev
+version:             0.1.0.0
+-- synopsis:            
+-- description:         
+license:             BSD3
+license-file:        LICENSE
+author:              Rahul Muttineni
+maintainer:          rahulmutt@gmail.com
+-- copyright:           
+-- category:            
+build-type:          Simple
+extra-source-files:  ChangeLog.md
+cabal-version:       >=1.10
+
+library
+  exposed-modules:     Control.Concurrent.Fiber
+  other-modules:       Control.Concurrent.Fiber.Internal
+  -- other-extensions:    
+  build-depends:       base >=4.8 && <4.9
+                     , transformers
+  hs-source-dirs:      src
+  java-sources:        prim/PrimOps.java
+  default-language:    Haskell2010
+  default-extensions:  InstanceSigs
+                       ScopedTypeVariables
