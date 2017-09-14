@@ -18,6 +18,9 @@ instance Applicative Fiber where
   (<*>) = ap
 
 instance Monad Fiber where
+  return :: a -> Fiber a
+  return a = Fiber $ \s -> (# s, a #)
+
   (>>=) :: forall a b. Fiber a -> (a -> Fiber b) -> Fiber b
   (>>=) (Fiber m) f = Fiber $ \s ->
     case setCurrentC# (unsafeCoerce m) s of
