@@ -5,7 +5,12 @@ import GHC.Base
 import Control.Monad
 import Unsafe.Coerce
 
+import Data.Typeable
+import Control.Exception
 import Control.Monad.IO.Class
+
+
+-- Fiber
 
 newtype Fiber a = Fiber { unFiber :: State# RealWorld -> (# State# RealWorld, a #) }
 
@@ -35,8 +40,34 @@ instance MonadIO Fiber where
   liftIO :: IO a -> Fiber a
   liftIO (IO m) = Fiber m
 
-runFiber :: Fiber a -> IO a
-runFiber (Fiber m) = IO m
+-- Yield exception
+newtype Yield = Yield Any
+  deriving Typeable
+
+instance Exception Yield
+
+instance Show Yield where
+  show _ = "Yield"
+
+-- Fiber Utilities
+
+runFiber :: forall a. Fiber a -> IO (Either (Fiber a) a)
+runFiber (Fiber m) =
+  catch (fmap Right $ IO m) (\(Yield fiber) -> return $ Left (unsafeCoerce fiber))
+
+yield :: Fiber a
+yield = Fiber $ \s ->
+  case getCurrentC# s of
+    (# s1, x #) -> case getContStack# s1 of
+      (# s2, xs #) ->
+        let continuation = (unsafeCoerce (compose (unsafeCoerce xs) (unsafeCoerce x)))
+        in unIO (throwIO (Yield continuation)) s2
+  where compose :: [a -> Fiber a] -> (a -> Fiber a)
+        compose (f:fs) = \x -> (unsafeCoerce f) x >>= compose fs
+        compose []     = return
+
+foreign import prim "eta.fibers.PrimOps.getCurrentC"
+  getCurrentC# :: State# s -> (# State# s, Any #)
 
 foreign import prim "eta.fibers.PrimOps.setCurrentC"
   setCurrentC# :: Any -> State# s -> State# s
@@ -47,3 +78,5 @@ foreign import prim "eta.fibers.PrimOps.pushNextC"
 foreign import prim "eta.fibers.PrimOps.popNextC"
   popNextC# :: State# RealWorld -> (# State# RealWorld, Any #)
 
+foreign import prim "eta.fibers.PrimOps.getContStack"
+  getContStack# :: State# s -> (# State# s, Any #)

@@ -7,6 +7,8 @@ import eta.runtime.stg.Closure;
 import eta.runtime.stg.StgContext;
 import eta.runtime.stg.TSO;
 
+import static ghc_prim.ghc.Types.*;
+
 /* TODO: Provide cleanup operations by extending the runtime with hooks. */
 
 public class PrimOps {
@@ -35,5 +37,20 @@ public class PrimOps {
 
     public static Closure popNextC(StgContext context) {
         return tsoContStack.get(context.currentTSO).pop();
+    }
+
+    public static Closure getCurrentC(StgContext context) {
+        return tsoCurrentCont.get(context.currentTSO);
+    }
+
+    public static Closure getContStack(StgContext context) {
+        Stack<Closure> contStack =
+            (Stack<Closure>) tsoContStack.get(context.currentTSO).clone();
+        ZCD next = new ZCD(null, DZMZN());
+        for (Closure c: contStack) {
+            next.x1 = c;
+            next = new ZCD(null, next);
+        }
+        return next.x2;
     }
 }
