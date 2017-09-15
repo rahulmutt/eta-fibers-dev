@@ -14,6 +14,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Control.Concurrent.Fiber
+                       Control.Concurrent.Fiber.MVar
   other-modules:       Control.Concurrent.Fiber.Internal
   -- other-extensions:    
   build-depends:       base >=4.8 && <4.9
