@@ -60,6 +60,8 @@ public class PrimOps {
         TSO tso = context.currentTSO;
         tso.closure = Closures.evalLazyIO(fiber);
         tso.whatNext = ThreadYield;
+        tsoContStack.put(tso, null);
+        tsoCurrentCont.put(tso, null);
         return null;
     }
 }

@@ -67,14 +67,17 @@ yield = Fiber $ \s ->
         compose []     = return
 
 forkFiber :: Fiber () -> IO ThreadId
-forkFiber fiber = forkIO $ do
+forkFiber = forkIO . runFiberAndYield
+
+runFiberAndYield :: Fiber () -> IO ()
+runFiberAndYield fiber = do
   res <- runFiber fiber
   case res of
     Left continuation -> yieldWith continuation
-    Right res -> return res
+    Right res         -> return res
 
 yieldWith :: Fiber () -> IO ()
-yieldWith fiber = IO $ \s -> (# yieldWith# (unsafeCoerce fiber) s, () #)
+yieldWith fiber = IO $ \s -> (# yieldWith# (unsafeCoerce (runFiberAndYield fiber)) s, () #)
 
 -- Runtime primitives
 
