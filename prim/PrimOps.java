@@ -4,10 +4,12 @@ import java.util.Stack;
 import java.util.IdentityHashMap;
 
 import eta.runtime.stg.Closure;
+import eta.runtime.stg.Closures;
 import eta.runtime.stg.StgContext;
 import eta.runtime.stg.TSO;
 
 import static ghc_prim.ghc.Types.*;
+import static eta.runtime.stg.TSO.WhatNext.*;
 
 /* TODO: Provide cleanup operations by extending the runtime with hooks. */
 
@@ -52,5 +54,12 @@ public class PrimOps {
             next = new ZCD(null, next);
         }
         return next.x2;
+    }
+
+    public static Closure yieldWith(StgContext context, Closure fiber) {
+        TSO tso = context.currentTSO;
+        tso.closure = Closures.evalLazyIO(fiber);
+        tso.whatNext = ThreadYield;
+        return null;
     }
 }

@@ -1,6 +1,7 @@
 module Control.Concurrent.Fiber
   (Fiber(..)
   ,runFiber
+  ,forkFiber
   ,yield
   ,liftIO)
   where

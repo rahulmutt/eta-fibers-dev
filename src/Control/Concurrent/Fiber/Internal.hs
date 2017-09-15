@@ -6,9 +6,9 @@ import Control.Monad
 import Unsafe.Coerce
 
 import Data.Typeable
+import Control.Concurrent
 import Control.Exception
 import Control.Monad.IO.Class
-
 
 -- Fiber
 
@@ -66,6 +66,18 @@ yield = Fiber $ \s ->
         compose (f:fs) = \x -> (unsafeCoerce f) x >>= compose fs
         compose []     = return
 
+forkFiber :: Fiber () -> IO ThreadId
+forkFiber fiber = forkIO $ do
+  res <- runFiber fiber
+  case res of
+    Left continuation -> yieldWith continuation
+    Right res -> return res
+
+yieldWith :: Fiber () -> IO ()
+yieldWith fiber = IO $ \s -> (# yieldWith# (unsafeCoerce fiber) s, () #)
+
+-- Runtime primitives
+
 foreign import prim "eta.fibers.PrimOps.getCurrentC"
   getCurrentC# :: State# s -> (# State# s, Any #)
 
@@ -76,7 +88,10 @@ foreign import prim "eta.fibers.PrimOps.pushNextC"
   pushNextC# :: Any -> State# s -> State# s
 
 foreign import prim "eta.fibers.PrimOps.popNextC"
-  popNextC# :: State# RealWorld -> (# State# RealWorld, Any #)
+  popNextC# :: State# s -> (# State# s, Any #)
 
 foreign import prim "eta.fibers.PrimOps.getContStack"
   getContStack# :: State# s -> (# State# s, Any #)
+
+foreign import prim "eta.fibers.PrimOps.yieldWith"
+  yieldWith# :: Any -> State# s -> State# s
