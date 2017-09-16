@@ -3,6 +3,7 @@ module Control.Concurrent.Fiber
   ,runFiber
   ,forkFiber
   ,yield
+  ,block
   ,liftIO)
   where
 

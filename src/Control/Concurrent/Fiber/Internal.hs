@@ -1,4 +1,3 @@
-{-# LANGUAGE GHCForeignImportPrim, MagicHash, UnboxedTuples, UnliftedFFITypes #-}
 module Control.Concurrent.Fiber.Internal where
 
 import GHC.Base
@@ -41,7 +40,9 @@ instance MonadIO Fiber where
   liftIO (IO m) = Fiber m
 
 -- Yield exception
-newtype Yield = Yield Any
+-- True - Block
+-- False - Yield
+data Yield = Yield Bool Any
   deriving Typeable
 
 instance Exception Yield
@@ -53,15 +54,26 @@ instance Show Yield where
 
 runFiber :: forall a. Fiber a -> IO (Either (Fiber a) a)
 runFiber (Fiber m) =
-  catch (fmap Right $ IO m) (\(Yield fiber) -> return $ Left (unsafeCoerce fiber))
+  catch (fmap Right $ IO m) (\(Yield _ fiber) -> return $ Left (unsafeCoerce fiber))
+
+runFiberWithBlock :: forall a. Fiber a -> IO (Either (Bool, Fiber a) a)
+runFiberWithBlock (Fiber m) =
+  catch (fmap Right $ IO m) $
+  \(Yield block fiber) -> return $ Left (block, (unsafeCoerce fiber))
 
 yield :: Fiber a
-yield = Fiber $ \s ->
+yield = yield' False
+
+block :: Fiber a
+block = yield' True
+
+yield' :: Bool -> Fiber a
+yield' block = Fiber $ \s ->
   case getCurrentC# s of
     (# s1, x #) -> case getContStack# s1 of
       (# s2, xs #) ->
         let continuation = (unsafeCoerce (compose (unsafeCoerce xs) (unsafeCoerce x)))
-        in unIO (throwIO (Yield continuation)) s2
+        in unIO (throwIOWithoutStack (Yield block continuation)) s2
   where compose :: [a -> Fiber a] -> (a -> Fiber a)
         compose (f:fs) = \x -> (unsafeCoerce f) x >>= compose fs
         compose []     = return
@@ -71,13 +83,20 @@ forkFiber = forkIO . runFiberAndYield
 
 runFiberAndYield :: Fiber () -> IO ()
 runFiberAndYield fiber = do
-  res <- runFiber fiber
+  res <- runFiberWithBlock fiber
   case res of
-    Left continuation -> yieldWith continuation
+    Left (block, continuation) -> yieldWith block continuation
     Right res         -> return res
 
-yieldWith :: Fiber () -> IO ()
-yieldWith fiber = IO $ \s -> (# yieldWith# (unsafeCoerce (runFiberAndYield fiber)) s, () #)
+yieldWith :: Bool -> Fiber () -> IO ()
+yieldWith block fiber = IO $ \s ->
+  (# yieldWith# (unsafeCoerce (runFiberAndYield fiber)) block# s, () #)
+  where block# = if block then 1# else 0#
+
+throwIOWithoutStack :: Exception e => e -> IO a
+throwIOWithoutStack e = IO $ \s ->
+  case raiseIOWithoutStackTrace# (unsafeCoerce (toException e)) s of
+    (# s1, a #) -> (# s1, unsafeCoerce a #)
 
 -- Runtime primitives
 
@@ -97,4 +116,7 @@ foreign import prim "eta.fibers.PrimOps.getContStack"
   getContStack# :: State# s -> (# State# s, Any #)
 
 foreign import prim "eta.fibers.PrimOps.yieldWith"
-  yieldWith# :: Any -> State# s -> State# s
+  yieldWith# :: Any -> Int# -> State# s -> State# s
+
+foreign import prim "eta.fibers.PrimOps.raise"
+  raiseIOWithoutStackTrace# :: Any -> State# s -> (# State# s, Any #)
