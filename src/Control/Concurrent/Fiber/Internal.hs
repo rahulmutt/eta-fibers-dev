@@ -9,6 +9,8 @@ import Control.Concurrent
 import Control.Exception
 import Control.Monad.IO.Class
 
+import Java.Core
+
 -- Fiber
 
 newtype Fiber a = Fiber { unFiber :: State# RealWorld -> (# State# RealWorld, a #) }
@@ -31,9 +33,10 @@ instance Monad Fiber where
       s1 -> case pushNextC# (unsafeCoerce f) s1 of
         s2 -> case m s2 of
           (# s3, a #) -> case popNextC# s3 of
-            (# s4, f' #) ->
-              case setCurrentC# (unsafeCoerce ((unsafeCoerce f' :: (a -> Fiber b)) a)) s4 of
-                s5 -> unFiber (f a) s5
+            (# s4, _ #) ->
+              case f a of
+                fa -> case setCurrentC# (unsafeCoerce fa) s4 of
+                  s5 -> unFiber fa s5
 
 instance MonadIO Fiber where
   liftIO :: IO a -> Fiber a
@@ -59,7 +62,7 @@ runFiber (Fiber m) =
 runFiberWithBlock :: forall a. Fiber a -> IO (Either (Bool, Fiber a) a)
 runFiberWithBlock (Fiber m) =
   catch (fmap Right $ IO m) $
-  \(Yield block fiber) -> return $ Left (block, (unsafeCoerce fiber))
+  \(Yield block fiber) -> return $ Left (block, unsafeCoerce fiber)
 
 yield :: Fiber a
 yield = yield' False
@@ -69,14 +72,25 @@ block = yield' True
 
 yield' :: Bool -> Fiber a
 yield' block = Fiber $ \s ->
-  case getCurrentC# s of
-    (# s1, x #) -> case getContStack# s1 of
-      (# s2, xs #) ->
-        let continuation = (unsafeCoerce (compose (unsafeCoerce xs) (unsafeCoerce x)))
-        in unIO (throwIOWithoutStack (Yield block continuation)) s2
-  where compose :: [a -> Fiber a] -> (a -> Fiber a)
-        compose (f:fs) = \x -> (unsafeCoerce f) x >>= compose fs
-        compose []     = return
+  case getContStack# s of
+    (# s1, stack# #) ->
+      case mkFiber# stack# s1 of
+        (# s2, continuation #) ->
+          unIO (throwIOWithoutStack (Yield block (unsafeCoerce continuation))) s2
+
+mkFiber# :: Stack# -> State# s -> (# State# s, Fiber a #)
+mkFiber# stack# s =
+  case popContStack# stack# s of
+    (# s1, 1#, cont1 #) ->
+      go ((unsafeCoerce cont1)
+          (error "Attempted to extract a value from a Fiber's yield or block.")) s1
+    (# s1, _,  _ #) ->
+      (# s1, error "You cannot yield or block as the last action of a Fiber." #)
+  where go :: Fiber a -> State# s -> (# State# s, Fiber a #)
+        go fiber s =
+          case popContStack# stack# s of
+            (# s1, 1#, cont #) -> go (fiber >>= (unsafeCoerce cont)) s1
+            (# s1, _, _     #) -> (# s1, fiber #)
 
 forkFiber :: Fiber () -> IO ThreadId
 forkFiber = forkIO . runFiberAndYield
@@ -100,6 +114,10 @@ throwIOWithoutStack e = IO $ \s ->
 
 -- Runtime primitives
 
+data {-# CLASS "java.util.Stack" #-} Stack
+
+type Stack# = Object# Stack
+
 foreign import prim "eta.fibers.PrimOps.getCurrentC"
   getCurrentC# :: State# s -> (# State# s, Any #)
 
@@ -113,7 +131,10 @@ foreign import prim "eta.fibers.PrimOps.popNextC"
   popNextC# :: State# s -> (# State# s, Any #)
 
 foreign import prim "eta.fibers.PrimOps.getContStack"
-  getContStack# :: State# s -> (# State# s, Any #)
+  getContStack# :: State# s -> (# State# s, Stack# #)
+
+foreign import prim "eta.fibers.PrimOps.popContStack"
+  popContStack# :: Stack# -> State# s -> (# State# s, Int#, Any #)
 
 foreign import prim "eta.fibers.PrimOps.yieldWith"
   yieldWith# :: Any -> Int# -> State# s -> State# s

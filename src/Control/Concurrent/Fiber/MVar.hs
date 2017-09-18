@@ -1,10 +1,10 @@
 {-# LANGUAGE UnboxedTuples, MagicHash #-}
 module Control.Concurrent.Fiber.MVar
-  (takeMVar, putMVar)
+  (MVar, takeMVar, putMVar)
 where
 
 import GHC.Base
-import Control.Concurrent.Fiber
+import Control.Concurrent.Fiber.Internal
 import GHC.MVar (MVar(..))
 
 takeMVar :: MVar a -> Fiber a

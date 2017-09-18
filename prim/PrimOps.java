@@ -61,14 +61,18 @@ public class PrimOps {
     }
 
     public static Closure getContStack(StgContext context) {
-        Stack<Closure> contStack =
-            (Stack<Closure>) tsoContStack.get(context.currentTSO).clone();
-        ZCD next = new ZCD(null, DZMZN());
-        for (Closure c: contStack) {
-            next.x1 = c;
-            next = new ZCD(null, next);
+        context.O(1, tsoContStack.get(context.currentTSO));
+        return null;
+    }
+
+    public static Closure popContStack(StgContext context, Stack<Closure> stack) {
+        if (stack.empty()) {
+            context.I(1, 0);
+            return null;
+        } else {
+            context.I(1, 1);
+            return stack.pop();
         }
-        return next.x2;
     }
 
     public static Closure yieldWith(StgContext context, Closure fiber, int block) {
