@@ -13,23 +13,17 @@ import eta.runtime.stg.Closure;
 import eta.runtime.stg.Closures;
 import eta.runtime.stg.StgContext;
 import eta.runtime.stg.TSO;
-import eta.runtime.exception.EtaException;
 import eta.runtime.concurrent.Concurrent;
+import eta.runtime.concurrent.Fiber;
 import eta.runtime.concurrent.MVar;
 
 import static ghc_prim.ghc.Types.*;
 import static eta.runtime.stg.TSO.WhatNext.*;
+import static eta.runtime.stg.Closures.*;
 
 /* TODO: Provide cleanup operations by extending the runtime with hooks. */
 
 public class PrimOps {
-    /* We do not need to worry about thread-safety since only one-thread at a
-       time has a given TSO - a guarantee provided by the Eta RTS. */
-    public static final Map<TSO, Stack<Closure>>
-        tsoContStack   = new IdentityHashMap<TSO, Stack<Closure>>();
-
-    public static final Map<TSO, Closure>
-        tsoCurrentCont = new IdentityHashMap<TSO, Closure>();
 
     public static void setCurrentC(StgContext context, Closure action) {
         context.currentTSO.currentCont = action;
@@ -51,7 +45,8 @@ public class PrimOps {
         return context.currentTSO.contStack;
     }
 
-    public static Closure popContStack(StgContext context, Stack<Closure> stack) {
+    public static Closure popContStack(StgContext context) {
+        Stack<Closure> stack = context.currentTSO.contStack;
         if (stack.empty()) {
             context.I1 = 0;
             return null;
@@ -61,14 +56,28 @@ public class PrimOps {
         }
     }
 
-    public static void yieldWith(StgContext context, Closure fiber, int block) {
-        TSO tso = context.currentTSO;
-        tso.closure = Closures.evalLazyIO(fiber);
-        tso.whatNext = (block == 1)? ThreadBlock : ThreadYield;
+    public static Closure resumeFiber = null;
+
+    static {
+        try {
+          resumeFiber = loadClosure("eta_fibers_dev.control.concurrent.fiber.Internal", "resumeFiber");
+        } catch (Exception e) {
+            System.err.println("FATAL ERROR: Failed to load resumeFiber closure.");
+            e.printStackTrace();
+            System.exit(1);
+        }
     }
 
-    public static Closure raise(StgContext context, Closure exception) {
-        throw new EtaException(exception);
+    public static void yieldFiber(StgContext context, int block) {
+        TSO tso = context.currentTSO;
+        tso.whatNext = (block == 1)? ThreadBlock : ThreadYield;
+        Closure oldClosure = tso.closure;
+        if (oldClosure instanceof EvalLazyIO) {
+            ((EvalLazyIO) oldClosure).p = resumeFiber;
+        } else {
+            oldClosure = Closures.evalLazyIO(resumeFiber);
+        }
+        throw Fiber.yieldException.get();
     }
 
     public static void addMVarListener(StgContext context, MVar m) {

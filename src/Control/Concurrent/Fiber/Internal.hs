@@ -1,6 +1,7 @@
 module Control.Concurrent.Fiber.Internal where
 
 import GHC.Base
+import GHC.Conc.Sync
 import Control.Monad
 import Unsafe.Coerce
 
@@ -42,27 +43,31 @@ instance MonadIO Fiber where
   liftIO :: IO a -> Fiber a
   liftIO (IO m) = Fiber m
 
--- Yield exception
--- True - Block
--- False - Yield
-data Yield = Yield Bool Any
-  deriving Typeable
-
-instance Exception Yield
-
-instance Show Yield where
-  show _ = "Yield"
-
 -- Fiber Utilities
-
 runFiber :: forall a. Fiber a -> IO (Either (Fiber a) a)
-runFiber (Fiber m) =
-  catch (fmap Right $ IO m) (\(Yield _ fiber) -> return $ Left (unsafeCoerce fiber))
+runFiber (Fiber m) = undefined
+  -- catch (fmap Right $ IO m) (\(Yield _ fiber) -> return $ Left (unsafeCoerce fiber))
 
 runFiberWithBlock :: forall a. Fiber a -> IO (Either (Bool, Fiber a) a)
-runFiberWithBlock (Fiber m) =
-  catch (fmap Right $ IO m) $
-  \(Yield block fiber) -> return $ Left (block, unsafeCoerce fiber)
+runFiberWithBlock (Fiber m) = undefined
+--   catch (fmap Right $ IO m) $
+--   \(Yield block fiber) -> return $ Left (block, unsafeCoerce fiber)
+
+resumeFiber :: Fiber ()
+resumeFiber = Fiber $ \s ->
+  case getCurrentC# s of
+    (# s1, fiber #) ->
+      case (unsafeCoerce fiber) s1 of
+        (# s2, a #) -> (# go a s2, () #)
+  where go :: Any -> State# s -> State# s
+        go a s =
+          case popContStack# s of
+            (# s1, 1#, cont1 #) ->
+              let fa = (unsafeCoerce cont1) a
+              in case setCurrentC# fa s1 of
+                   s2 -> case fa s2 of
+                     (# s3, a' #) -> go a' s3
+            (# s1, _, _ #) -> s1
 
 yield :: Fiber a
 yield = yield' False
@@ -72,45 +77,23 @@ block = yield' True
 
 yield' :: Bool -> Fiber a
 yield' block = Fiber $ \s ->
-  case getContStack# s of
-    (# s1, stack# #) ->
-      case mkFiber# stack# s1 of
-        (# s2, continuation #) ->
-          unIO (throwIOWithoutStack (Yield block (unsafeCoerce continuation))) s2
-
-mkFiber# :: Stack# -> State# s -> (# State# s, Fiber a #)
-mkFiber# stack# s =
-  case popContStack# stack# s of
-    (# s1, 1#, cont1 #) ->
-      go ((unsafeCoerce cont1)
-          (error "Attempted to extract a value from a Fiber's yield or block.")) s1
-    (# s1, _,  _ #) ->
-      (# s1, error "You cannot yield or block as the last action of a Fiber." #)
-  where go :: Fiber a -> State# s -> (# State# s, Fiber a #)
-        go fiber s =
-          case popContStack# stack# s of
-            (# s1, 1#, cont #) -> go (fiber >>= (unsafeCoerce cont)) s1
-            (# s1, _, _     #) -> (# s1, fiber #)
+  case popContStack# s of
+    (# s1, 1#, current #) ->
+      let fa = (unsafeCoerce current) extractYieldError
+      in case setCurrentC# (unsafeCoerce fa) s1 of
+           s2 -> (# yieldFiber# (dataToTag# block) s2
+                 ,  unreachableCodeError #)
+    (# s1, _, _ #) -> (# s1, lastYieldError #)
+  where extractYieldError =
+          error "Attempted to extract a value from a Fiber's yield or block."
+        lastYieldError =
+          error "You cannot yield or block as the last action of a Fiber."
+        unreachableCodeError =
+          error "This code should not have been reached."
 
 forkFiber :: Fiber () -> IO ThreadId
-forkFiber = forkIO . runFiberAndYield
-
-runFiberAndYield :: Fiber () -> IO ()
-runFiberAndYield fiber = do
-  res <- runFiberWithBlock fiber
-  case res of
-    Left (block, continuation) -> yieldWith block continuation
-    Right res         -> return res
-
-yieldWith :: Bool -> Fiber () -> IO ()
-yieldWith block fiber = IO $ \s ->
-  (# yieldWith# (unsafeCoerce (runFiberAndYield fiber)) block# s, () #)
-  where block# = if block then 1# else 0#
-
-throwIOWithoutStack :: Exception e => e -> IO a
-throwIOWithoutStack e = IO $ \s ->
-  case raiseIOWithoutStackTrace# (unsafeCoerce (toException e)) s of
-    (# s1, a #) -> (# s1, unsafeCoerce a #)
+forkFiber (Fiber m)= IO $ \s ->
+  case fork# m s of (# s1, tid #) -> (# s1, ThreadId tid #)
 
 -- Runtime primitives
 
@@ -130,14 +113,8 @@ foreign import prim "eta.fibers.PrimOps.pushNextC"
 foreign import prim "eta.fibers.PrimOps.popNextC"
   popNextC# :: State# s -> (# State# s, Any #)
 
-foreign import prim "eta.fibers.PrimOps.getContStack"
-  getContStack# :: State# s -> (# State# s, Stack# #)
-
 foreign import prim "eta.fibers.PrimOps.popContStack"
-  popContStack# :: Stack# -> State# s -> (# State# s, Int#, Any #)
+  popContStack# :: State# s -> (# State# s, Int#, Any #)
 
-foreign import prim "eta.fibers.PrimOps.yieldWith"
-  yieldWith# :: Any -> Int# -> State# s -> State# s
-
-foreign import prim "eta.fibers.PrimOps.raise"
-  raiseIOWithoutStackTrace# :: Any -> State# s -> (# State# s, Any #)
+foreign import prim "eta.fibers.PrimOps.yieldFiber"
+  yieldFiber# :: Int# -> State# s -> State# s
