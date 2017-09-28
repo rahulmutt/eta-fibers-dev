@@ -31,95 +31,54 @@ public class PrimOps {
     public static final Map<TSO, Closure>
         tsoCurrentCont = new IdentityHashMap<TSO, Closure>();
 
-    public static final Map<Integer, Queue<TSO>>
-        mvarListeners = new ConcurrentHashMap<Integer, Queue<TSO>>();
-
-    public static final AtomicBoolean mvarListenersLock
-        = new AtomicBoolean();
-
-    public static Closure setCurrentC(StgContext context, Closure action) {
-        tsoCurrentCont.put(context.currentTSO, action);
-        return null;
+    public static void setCurrentC(StgContext context, Closure action) {
+        context.currentTSO.currentCont = action;
     }
 
-    public static Closure pushNextC(StgContext context, Closure action) {
-        Stack<Closure> contStack = tsoContStack.get(context.currentTSO);
-        if (contStack == null) {
-            contStack = new Stack<Closure>();
-            tsoContStack.put(context.currentTSO, contStack);
-        }
-        contStack.push(action);
-        return null;
+    public static void pushNextC(StgContext context, Closure action) {
+        context.currentTSO.contStack.push(action);
     }
 
     public static Closure popNextC(StgContext context) {
-        return tsoContStack.get(context.currentTSO).pop();
+        return context.currentTSO.contStack.pop();
     }
 
     public static Closure getCurrentC(StgContext context) {
-        return tsoCurrentCont.get(context.currentTSO);
+        return context.currentTSO.currentCont;
     }
 
-    public static Closure getContStack(StgContext context) {
-        context.O(1, tsoContStack.get(context.currentTSO));
-        return null;
+    public static Stack<Closure> getContStack(StgContext context) {
+        return context.currentTSO.contStack;
     }
 
     public static Closure popContStack(StgContext context, Stack<Closure> stack) {
         if (stack.empty()) {
-            context.I(1, 0);
+            context.I1 = 0;
             return null;
         } else {
-            context.I(1, 1);
+            context.I1 = 1;
             return stack.pop();
         }
     }
 
-    public static Closure yieldWith(StgContext context, Closure fiber, int block) {
+    public static void yieldWith(StgContext context, Closure fiber, int block) {
         TSO tso = context.currentTSO;
         tso.closure = Closures.evalLazyIO(fiber);
         tso.whatNext = (block == 1)? ThreadBlock : ThreadYield;
-        tsoContStack.put(tso, null);
-        tsoCurrentCont.put(tso, null);
-        return null;
     }
 
     public static Closure raise(StgContext context, Closure exception) {
         throw new EtaException(exception);
     }
 
-    public static Closure addMVarListener(StgContext context, MVar m) {
-        Queue<TSO> listeners = null;
-        int mvarHash = m.hashCode();
-        TSO tso = context.currentTSO;
-        do {
-            listeners = mvarListeners.get(mvarHash);
-            if (listeners == null) {
-                if (mvarListenersLock.compareAndSet(false,true)) {
-                    try {
-                        listeners = new ConcurrentLinkedQueue();
-                        listeners.offer(tso);
-                        mvarListeners.put(mvarHash, listeners);
-                    } finally {
-                        mvarListenersLock.set(false);
-                    }
-                } else continue;
-            } else {
-                listeners.offer(tso);
-                break;
-            }
-        } while (listeners == null);
-        return null;
+    public static void addMVarListener(StgContext context, MVar m) {
+        m.addListener(context.currentTSO);
     }
 
-    public static Closure awakenMVarListeners(StgContext context, MVar m) {
-        Queue<TSO> listeners = mvarListeners.get(m.hashCode());
-        if (listeners != null) {
-            TSO tso = null;
-            while ((tso = listeners.poll()) != null) {
-                Concurrent.pushToGlobalRunQueue(tso);
-            }
+    public static void awakenMVarListeners(StgContext context, MVar m) {
+        TSO tso = null;
+        while ((tso = m.grabListener()) != null) {
+            Concurrent.pushToGlobalRunQueue(tso);
         }
-        return null;
     }
 }
