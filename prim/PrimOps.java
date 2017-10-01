@@ -81,13 +81,15 @@ public class PrimOps {
     }
 
     public static void addMVarListener(StgContext context, MVar m) {
-        m.addListener(context.currentTSO);
+        m.registerListener(context.currentTSO);
     }
 
     public static void awakenMVarListeners(StgContext context, MVar m) {
-        TSO tso = null;
-        while ((tso = m.grabListener()) != null) {
-            Concurrent.pushToGlobalRunQueue(tso);
+        for (TSO top = m.getListeners(); top != null;) {
+            Concurrent.pushToGlobalRunQueue(top);
+            TSO oldTop = top;
+            top = top.link;
+            oldTop.link = null;
         }
     }
 }
