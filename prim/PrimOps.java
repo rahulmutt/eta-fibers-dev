@@ -30,29 +30,25 @@ public class PrimOps {
     }
 
     public static void pushNextC(StgContext context, Closure action) {
-        context.currentTSO.contStack.push(action);
+        context.currentTSO.pushCont(action);
     }
 
     public static Closure popNextC(StgContext context) {
-        return context.currentTSO.contStack.pop();
+        return context.currentTSO.popCont();
     }
 
     public static Closure getCurrentC(StgContext context) {
         return context.currentTSO.currentCont;
     }
 
-    public static Stack<Closure> getContStack(StgContext context) {
-        return context.currentTSO.contStack;
-    }
-
     public static Closure popContStack(StgContext context) {
-        Stack<Closure> stack = context.currentTSO.contStack;
-        if (stack.empty()) {
+        TSO tso = context.currentTSO;
+        if (tso.emptyContStack()) {
             context.I1 = 0;
             return null;
         } else {
             context.I1 = 1;
-            return stack.pop();
+            return tso.popCont();
         }
     }
 
